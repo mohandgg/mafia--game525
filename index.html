@@ -3,185 +3,155 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MAFIA - النسخة الأصلية</title>
+    <title>MAFIA PRO</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        :root { --red: #c0392b; --black: #121212; --gold: #f1c40f; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--black); color: white; text-align: center; margin:0; }
-        .screen { display: none; padding: 20px; }
-        .screen.active { display: block; }
-        .card { background: #1a1a1a; padding: 25px; border-radius: 20px; border: 1px solid #333; display: inline-block; width: 90%; max-width: 400px; margin-top: 20px; }
-        input { width: 85%; padding: 15px; margin: 10px 0; border-radius: 10px; border: none; background: #222; color: white; text-align: center; }
-        button { width: 100%; padding: 15px; margin: 8px 0; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        .btn-main { background: var(--red); color: white; }
-        .btn-blue { background: #2980b9; color: white; }
-        .btn-green { background: #27ae60; color: white; }
-        .timer { font-size: 40px; color: var(--red); font-weight: bold; margin: 10px; }
-        .player-item { background: #222; padding: 10px; margin: 5px; border-radius: 8px; border-right: 4px solid var(--gold); }
+        body { font-family: sans-serif; background: #0a0a0a; color: white; text-align: center; margin: 0; overflow-x: hidden; }
+        .container { background: #151515; padding: 20px; border-radius: 15px; width: 90%; max-width: 450px; display: inline-block; margin-top: 20px; border: 1px solid #333; }
+        .hidden { display: none !important; }
+        .log-box { background: #000; color: #f1c40f; padding: 15px; margin: 10px 0; border-radius: 10px; border: 1px solid #444; font-weight: bold; }
+        button { width: 100%; padding: 15px; margin: 5px 0; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; font-size: 1rem; }
+        .btn-red { background: #e74c3c; color: white; }
+        .btn-blue { background: #3498db; color: white; }
+        .timer { font-size: 40px; color: #e74c3c; font-weight: bold; }
+        #game-over-screen { position: fixed; top:0; left:0; width: 100%; height:100%; background: rgba(0,0,0,0.95); z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .role-tag { font-size: 0.8rem; color: #888; margin-right: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="screen-login" class="screen active">
-        <div class="card">
-            <h1>🕵️‍♂️ MAFIA</h1>
-            <input type="text" id="username" placeholder="اسمك المستعار">
-            <button class="btn-main" onclick="showSection('screen-setup')">إنشاء غرفة</button>
-            <button class="btn-blue" onclick="showSection('screen-join')">دخول بكود</button>
-        </div>
+    <div id="game-over-screen" class="hidden">
+        <h1 id="winner-text" style="font-size: 3rem; color: #f1c40f;">--</h1>
+        <div id="final-list" style="margin: 20px;"></div>
+        <button class="btn-blue" style="width: 200px;" onclick="location.reload()">لعبة جديدة</button>
     </div>
 
-    <div id="screen-setup" class="screen">
-        <div class="card">
-            <h3>الإعدادات</h3>
-            المافيا: <input type="number" id="mCount" value="1"><br>
-            الدكتور: <input type="number" id="dCount" value="1"><br>
-            الشايب: <input type="number" id="sCount" value="1"><br>
-            ثواني الدور: <input type="number" id="secTime" value="20"><br>
-            <button class="btn-main" onclick="createRoom()">إنشاء ونشر الكود</button>
-            <button style="background:none; color:gray;" onclick="showSection('screen-login')">رجوع</button>
-        </div>
+    <div id="screen-login" class="container">
+        <h1>🕵️‍♂️ مافيا</h1>
+        <input type="text" id="username" placeholder="اسمك المستعار" style="width: 80%; padding: 10px; margin-bottom: 10px;">
+        <button class="btn-red" onclick="showSetup()">إنشاء مجموعة</button>
+        <button class="btn-blue" onclick="showJoin()">دخول بكود</button>
     </div>
 
-    <div id="screen-join" class="screen">
-        <div class="card">
-            <h3>ادخل كود الدعوة</h3>
-            <input type="text" id="roomInput" placeholder="أدخل الكود هنا">
-            <button class="btn-blue" onclick="joinRoom()">انضمام الآن</button>
-            <button style="background:none; color:gray;" onclick="showSection('screen-login')">رجوع</button>
-        </div>
+    <div id="screen-setup" class="container hidden">
+        <h3>إعدادات الروم</h3>
+        المافيا: <input type="number" id="mC" value="1" style="width:50px"> | 
+        دكتور: <input type="number" id="dC" value="1" style="width:50px"><br>
+        شايب: <input type="number" id="sC" value="1" style="width:50px"> | 
+        وقت الدور: <input type="number" id="tC" value="15" style="width:50px"><br>
+        وقت النهار: <input type="number" id="dayC" value="30" style="width:50px"><br>
+        <button class="btn-red" onclick="createRoom()">تأكيد الإنشاء</button>
     </div>
 
-    <div id="screen-lobby" class="screen">
-        <div class="card">
-            <h2 id="display-code" style="color:var(--gold)">--</h2>
-            <div id="player-list"></div>
-            <button id="start-btn" class="btn-green" style="display:none;" onclick="startGame()">ابدأ اللعبة 🔥</button>
-        </div>
+    <div id="screen-lobby" class="container hidden">
+        <h2 id="room-code" style="color: #f1c40f;">--</h2>
+        <div id="player-list"></div>
+        <button id="start-btn" class="btn-red hidden" onclick="startGame()">ابدأ اللعبة 🔥</button>
     </div>
 
-    <div id="screen-game" class="screen">
-        <div id="timer-box" class="timer">--</div>
-        <div class="card">
-            <p>دورك السري هو:</p>
-            <h2 id="my-role" style="color:var(--gold)">--</h2>
-            <hr>
-            <h3 id="phase-name"></h3>
-            <div id="action-list"></div>
-        </div>
+    <div id="screen-game" class="container">
+        <div id="timer" class="timer">--</div>
+        <div id="ui-phase" style="color: #3498db; font-size: 1.2rem; margin-bottom: 10px;">انتظر المضيف..</div>
+        <div id="ui-log" class="log-box">مرحباً بك في مافيا</div>
+        <div id="role-display" style="font-size: 1.5rem; color: #e74c3c; margin: 10px 0;"></div>
+        <div id="action-list"></div>
     </div>
 
-    <audio id="snd-kill" src="https://www.soundjay.com/mechanical/gun-gunshot-01.mp3"></audio>
-    <audio id="snd-write" src="https://www.soundjay.com/misc/sounds/scribble-1.mp3"></audio>
-    <audio id="snd-heal" src="https://www.soundjay.com/misc/sounds/tape-1.mp3"></audio>
+    <audio id="bell" src="https://www.soundjay.com/misc/sounds/bell-ringing-01.mp3"></audio>
 
     <script>
         const socket = io();
-        let currentRoom = "", myRole = "", timeLeft = 0, timerInterval;
+        let currentRoom = "", myRole = "", timeLeft = 0, timerInt;
 
-        function showSection(id) {
-            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
+        function showScreen(id) {
+            document.querySelectorAll('.container').forEach(s => s.classList.add('hidden'));
+            document.getElementById(id).classList.remove('hidden');
         }
 
-        function unlockAudio() {
-            ['snd-kill','snd-write','snd-heal'].forEach(id => {
-                let a = document.getElementById(id);
-                a.play().then(() => a.pause());
-            });
-        }
+        function showSetup() { if(document.getElementById('username').value) showScreen('screen-setup'); }
+        function showJoin() { if(document.getElementById('username').value) { showScreen('screen-login'); document.getElementById('screen-login').innerHTML += '<input type="text" id="rCode" placeholder="الكود"><button class="btn-blue" onclick="joinRoom()">دخول</button>'; } }
 
         function createRoom() {
-            const name = document.getElementById('username').value;
-            if(!name) return alert("سجل اسمك");
-            unlockAudio();
             socket.emit('createRoom', {
-                name,
-                mafia: document.getElementById('mCount').value,
-                doctor: document.getElementById('dCount').value,
-                detective: document.getElementById('sCount').value,
-                timer: document.getElementById('secTime').value
+                name: document.getElementById('username').value,
+                mafia: document.getElementById('mC').value, doctor: document.getElementById('dC').value,
+                detective: document.getElementById('sC').value, timer: document.getElementById('tC').value,
+                dayTimer: document.getElementById('dayC').value, defTimer: 10
             });
         }
 
         function joinRoom() {
-            const name = document.getElementById('username').value;
-            const code = document.getElementById('roomInput').value;
-            if(!name || !code) return alert("اكمل البيانات");
-            unlockAudio();
-            socket.emit('joinRoom', { name, code });
-            currentRoom = code;
+            currentRoom = document.getElementById('rCode').value;
+            socket.emit('joinRoom', { name: document.getElementById('username').value, code: currentRoom });
         }
 
-        socket.on('roomCreated', c => {
-            currentRoom = c;
-            document.getElementById('display-code').innerText = "كود الغرفة: " + c;
-            showSection('screen-lobby');
-        });
-
+        socket.on('roomCreated', c => { currentRoom = c; document.getElementById('room-code').innerText = "كود: " + c; showScreen('screen-lobby'); });
+        
         socket.on('updatePlayers', ps => {
-            showSection('screen-lobby');
-            document.getElementById('player-list').innerHTML = ps.map(p => `<div class="player-item">👤 ${p.name}</div>`).join('');
-            if(ps.length >= 2) document.getElementById('start-btn').style.display = "block";
+            document.getElementById('player-list').innerHTML = ps.map(p => `<div>👤 ${p.name}</div>`).join('');
+            if(ps.length >= 2) document.getElementById('start-btn').classList.remove('hidden');
         });
 
         function startGame() { socket.emit('startGame', currentRoom); }
 
-        socket.on('yourRole', r => {
-            myRole = r;
-            document.getElementById('my-role').innerText = r;
-            showSection('screen-game');
-        });
+        socket.on('yourRole', r => { myRole = r; document.getElementById('role-display').innerText = "دورك: " + r; });
 
         socket.on('changePhase', d => {
-            clearInterval(timerInterval);
-            document.getElementById('phase-name').innerText = d.phase;
-            timeLeft = d.timer;
-            startCountdown();
-
+            document.getElementById('ui-phase').innerText = d.phase;
+            startTimer(d.timer);
             const list = document.getElementById('action-list');
             list.innerHTML = "";
-            const isTurn = (d.phase.includes("المافيا") && myRole === "مافيا") || (d.phase.includes("الشايب") && myRole === "شايب") || (d.phase.includes("الدكتور") && myRole === "دكتور");
 
-            if(isTurn) {
+            // شرط "قائد المافيا": الزر يظهر فقط إذا كنت مافيا وأنت "القائد" المختار من السيرفر
+            const isMafiaLeader = (d.phase.includes("المافيا") && myRole === "مافيا" && socket.id === d.mafiaLeaderId);
+            const isOtherRole = (d.phase.includes("الشايب") && myRole === "شايب") || (d.phase.includes("الدكتور") && myRole === "دكتور");
+
+            if(isMafiaLeader || isOtherRole) {
                 d.players.forEach(p => {
                     if(p.id !== socket.id) {
-                        let b = document.createElement('button');
-                        b.className = "btn-main"; b.innerText = p.name;
-                        b.onclick = () => {
-                            let ev = myRole === "مافيا" ? "mafiaAction" : (myRole === "دكتور" ? "doctorAction" : "detectiveAction");
-                            socket.emit(ev, { roomCode: currentRoom, targetId: p.id });
-                            list.innerHTML = "تم الاختيار ✅";
-                        };
+                        let b = document.createElement('button'); b.className = "btn-red"; b.innerText = p.name;
+                        b.onclick = () => socket.emit(myRole === "مافيا" ? "mafiaAction" : (myRole === "دكتور" ? "doctorAction" : "detectiveAction"), { roomCode: currentRoom, targetId: p.id });
                         list.appendChild(b);
                     }
                 });
-            } else { list.innerHTML = "<p>الآن ليل.. انتظر دورك 💤</p>"; }
+            } else if (d.phase.includes("المافيا") && myRole === "مافيا") {
+                list.innerHTML = "<p>أنت مافيا، لكن خويك هو اللي يختار القتيل.. تشاوروا!</p>";
+            } else {
+                list.innerHTML = "ليل.. غمض عيونك 💤";
+            }
         });
 
-        function startCountdown() {
-            timerInterval = setInterval(() => {
-                document.getElementById('timer-box').innerText = timeLeft;
-                if(timeLeft <= 0) clearInterval(timerInterval);
-                timeLeft--;
-            }, 1000);
-        }
-
         socket.on('dayStarted', d => {
-            alert(d.killed ? "مات اللاعب: " + d.players.find(p=>p.id===d.killed).name : "لم يمت أحد الليلة!");
-            document.getElementById('phase-name').innerText = "التصويت العلني 🗳️";
+            document.getElementById('ui-log').innerText = d.msg;
+            document.getElementById('ui-phase').innerText = "النهار - وقت التصويت";
+            startTimer(d.dayTimer);
             const list = document.getElementById('action-list');
-            list.innerHTML = "<h4>صوت للي تشك فيه:</h4>";
-            d.players.filter(p => p.isAlive).forEach(p => {
-                let b = document.createElement('button');
-                b.className = "btn-blue"; b.innerText = p.name;
-                b.onclick = () => { socket.emit('castVote', { roomCode: currentRoom, targetId: p.id }); list.innerHTML = "تم التصويت!"; };
+            list.innerHTML = "";
+            d.players.forEach(p => {
+                let b = document.createElement('button'); b.className = "btn-blue"; b.innerText = p.name;
+                b.onclick = () => { socket.emit('castVote', { roomCode: currentRoom, targetId: p.id }); list.innerHTML = "تم التصويت"; }
                 list.appendChild(b);
             });
         });
 
-        socket.on('playSound', t => { document.getElementById('snd-'+t).play(); });
-        socket.on('notification', m => alert(m));
+        socket.on('gameOver', d => {
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            document.getElementById('winner-text').innerText = "الفائز: " + d.winner;
+            document.getElementById('final-list').innerHTML = d.players.map(p => `<div>${p.name}: <b style="color:#f1c40f">${p.role}</b></div>`).join('');
+        });
+
+        function startTimer(s) {
+            clearInterval(timerInt);
+            timeLeft = s;
+            timerInt = setInterval(() => {
+                document.getElementById('timer').innerText = timeLeft;
+                if(timeLeft <= 0) clearInterval(timerInt);
+                timeLeft--;
+            }, 1000);
+        }
+
+        socket.on('playBell', () => { document.getElementById('bell').play(); });
+        socket.on('uiLog', m => { document.getElementById('ui-log').innerText = m; });
     </script>
 </body>
 </html>
