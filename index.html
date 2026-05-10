@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مافيا أونلاين</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: white; text-align: center; margin: 0; padding: 20px; }
+        .container { background: #1a1a1a; padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); display: inline-block; width: 90%; max-width: 400px; vertical-align: top; }
+        input, button { width: 100%; padding: 15px; margin: 10px 0; border-radius: 10px; border: none; box-sizing: border-box; font-size: 16px; }
+        button { background: #c0392b; color: white; cursor: pointer; font-weight: bold; }
+        .hidden { display: none; }
+        #role-card { background: linear-gradient(145deg, #2c3e50, #000000); padding: 40px 20px; border: 3px solid #f1c40f; border-radius: 20px; margin-top: 20px; }
+        .role-name { font-size: 40px; color: #f1c40f; text-shadow: 0 0 10px rgba(241, 196, 15, 0.5); }
+    </style>
+</head>
+<body>
+
+    <div id="screen-login" class="container">
+        <h1>🕵️‍♂️ مافيا</h1>
+        <input type="text" id="username" placeholder="اسمي هو...">
+        <button onclick="showScreen('screen-create')">إنشاء مجموعة</button>
+        <button onclick="showScreen('screen-join')">دخول بكود</button>
+    </div>
+
+    <div id="screen-create" class="container hidden">
+        <h3>إعدادات اللعبة</h3>
+        <input type="number" id="mafiaCount" value="1" placeholder="عدد المافيا">
+        <input type="number" id="doctorCount" value="1" placeholder="عدد الدكاترة">
+        <input type="number" id="detCount" value="1" placeholder="عدد الشيبان">
+        <button onclick="createRoom()">إنشاء ونشر الكود</button>
+    </div>
+
+    <div id="screen-join" class="container hidden">
+        <h3>أدخل الكود</h3>
+        <input type="text" id="roomInput" placeholder="مثال: 12345">
+        <button onclick="joinRoom()">دخول المجموعة</button>
+    </div>
+
+    <div id="screen-lobby" class="container hidden">
+        <h3>غرفة الانتظار</h3>
+        <h2 id="display-code" style="color: #f1c40f;"></h2>
+        <div id="player-list"></div>
+        <button id="start-btn" class="hidden" onclick="startGame()" style="background: #27ae60;">ابدأ اللعبة (توزيع الكروت)</button>
+    </div>
+
+    <div id="screen-game" class="container hidden">
+        <h3>بطاقتك السرية</h3>
+        <div id="role-card">
+            <p>أنت الآن بـ دور:</p>
+            <h1 id="my-role" class="role-name">...</h1>
+            <p style="color: #888;">(لا توري أحد جوالك! 🤫)</p>
+        </div>
+        <div id="game-controls">
+            </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let myCode = "";
+
+        function showScreen(id) {
+            document.querySelectorAll('.container').forEach(c => c.classList.add('hidden'));
+            document.getElementById(id).classList.remove('hidden');
+        }
+
+        function createRoom() {
+            const name = document.getElementById('username').value;
+            if(!name) return alert("اكتب اسمك!");
+            socket.emit('createRoom', {
+                name: name,
+                mafia: document.getElementById('mafiaCount').value,
+                doctor: document.getElementById('doctorCount').value,
+                detective: document.getElementById('detCount').value
+            });
+        }
+
+        function joinRoom() {
+            const name = document.getElementById('username').value;
+            const code = document.getElementById('roomInput').value;
+            socket.emit('joinRoom', { name, code });
+        }
+
+        function startGame() {
+            socket.emit('startGame', myCode);
+        }
+
+        socket.on('roomCreated', code => {
+            myCode = code;
+            document.getElementById('display-code').innerText = code;
+            showScreen('screen-lobby');
+        });
+
+        socket.on('updatePlayers', players => {
+            document.getElementById('player-list').innerHTML = players.map(p => `<div>✅ ${p.name}</div>`).join('');
+            if(players.length >= 1) document.getElementById('start-btn').classList.remove('hidden');
+        });
+
+        // هنا السحر! لما السيرفر يرسل الدور، نغير الصفحة
+        socket.on('yourRole', role => {
+            document.getElementById('my-role').innerText = role;
+            showScreen('screen-game'); // يودينا للصفحة الثانية
+        });
+    </script>
+</body>
+</html>
