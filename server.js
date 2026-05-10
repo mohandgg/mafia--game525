@@ -10,49 +10,35 @@ app.use(express.static(__dirname));
 let rooms = {};
 
 io.on('connection', (socket) => {
-    // إنشاء غرفة
     socket.on('createRoom', (data) => {
         let roomCode = Math.floor(10000 + Math.random() * 90000).toString();
         rooms[roomCode] = {
+            host: socket.id,
             settings: data,
-            players: [{ id: socket.id, name: data.name, role: '', isAlive: true }],
+            players: [{ id: socket.id, name: data.name, role: '', isAlive: true, lastProtected: null }],
             phase: 'waiting',
             actions: { kill: null, heal: null },
-            votes: {}
+            votes: {},
+            timerObj: null
         };
         socket.join(roomCode);
         socket.emit('roomCreated', roomCode);
         io.to(roomCode).emit('updatePlayers', rooms[roomCode].players);
     });
 
-    // انضمام لاعب
     socket.on('joinRoom', (data) => {
         let room = rooms[data.code];
-        if (room && !room.players.find(p => p.id === socket.id)) {
-            room.players.push({ id: socket.id, name: data.name, role: '', isAlive: true });
+        if (room && !room.players.some(p => p.name === data.name)) {
+            room.players.push({ id: socket.id, name: data.name, role: '', isAlive: true, lastProtected: null });
             socket.join(data.code);
             io.to(data.code).emit('updatePlayers', room.players);
+        } else {
+            socket.emit('uiLog', 'الاسم مستخدم أو الغرفة غير موجودة');
         }
     });
 
-    // كشف خروج اللاعب (لو قفل الصفحة أو طفى جواله)
-    socket.on('disconnect', () => {
-        for (let code in rooms) {
-            let room = rooms[code];
-            let index = room.players.findIndex(p => p.id === socket.id);
-            if (index !== -1) {
-                let name = room.players[index].name;
-                room.players.splice(index, 1);
-                io.to(code).emit('updatePlayers', room.players);
-                io.to(code).emit('notification', `اللاعب ${name} غادر اللعبة ⚠️`);
-            }
-        }
-    });
-
-    // بداية اللعبة وتوزيع الأدوار
     socket.on('startGame', (roomCode) => {
         let room = rooms[roomCode];
-        if (!room) return;
         let roles = [];
         for(let i=0; i<room.settings.mafia; i++) roles.push('مافيا');
         for(let i=0; i<room.settings.doctor; i++) roles.push('دكتور');
@@ -64,62 +50,116 @@ io.on('connection', (socket) => {
             p.role = roles[i];
             io.to(p.id).emit('yourRole', p.role);
         });
-        runGameLoop(roomCode);
+        startNight(roomCode);
     });
 
-    // إدارة مراحل الليل (مافيا -> شايب -> دكتور)
-    async function runGameLoop(roomCode) {
+    function startNight(roomCode) {
         let room = rooms[roomCode];
-        let timer = room.settings.timer * 1000;
-
-        // ليل المافيا
-        io.to(roomCode).emit('changePhase', { phase: 'المافيا تختار 🔪', players: room.players.filter(p => p.isAlive), timer: room.settings.timer });
-        await new Promise(r => setTimeout(r, timer));
-
-        // ليل الشايب
-        io.to(roomCode).emit('changePhase', { phase: 'الشايب يحقق 🔍', players: room.players.filter(p => p.isAlive), timer: room.settings.timer });
-        await new Promise(r => setTimeout(r, timer));
-
-        // ليل الدكتور
-        io.to(roomCode).emit('changePhase', { phase: 'الدكتور يعالج 💊', players: room.players.filter(p => p.isAlive), timer: room.settings.timer });
-        await new Promise(r => setTimeout(r, timer));
-
-        processNightResults(roomCode);
+        if(!room || checkWin(roomCode)) return;
+        room.actions = { kill: null, heal: null };
+        runPhase(roomCode, 'night_mafia', 'ليل - دور المافيا 🔪');
     }
 
-    // الأفعال
-    socket.on('mafiaAction', d => { rooms[d.roomCode].actions.kill = d.targetId; io.to(d.roomCode).emit('playSound', 'kill'); });
-    socket.on('doctorAction', d => { rooms[d.roomCode].actions.heal = d.targetId; io.to(d.roomCode).emit('playSound', 'heal'); });
-    socket.on('detectiveAction', d => {
-        let t = rooms[d.roomCode].players.find(p => p.id === d.targetId);
-        socket.emit('notification', `الشخص المختص هو: ${t.role}`);
-        socket.emit('playSound', 'write');
+    function runPhase(roomCode, phase, label) {
+        let room = rooms[roomCode];
+        room.phase = phase;
+        
+        // تحديد من هو "قائد المافيا" الحالي (أول مافيا حي)
+        let mafiaLeader = room.players.find(p => p.role === 'مافيا' && p.isAlive);
+        
+        io.to(roomCode).emit('changePhase', { 
+            phase: label, 
+            players: room.players.filter(p=>p.isAlive), 
+            timer: room.settings.timer,
+            mafiaLeaderId: mafiaLeader ? mafiaLeader.id : null 
+        });
+
+        clearTimeout(room.timerObj);
+        room.timerObj = setTimeout(() => nextPhase(roomCode), room.settings.timer * 1000);
+    }
+
+    function nextPhase(roomCode) {
+        let room = rooms[roomCode];
+        if(!room) return;
+        io.to(roomCode).emit('playBell'); 
+        
+        if (room.phase === 'night_mafia') runPhase(roomCode, 'night_detective', 'ليل - دور الشايب 🔍');
+        else if (room.phase === 'night_detective') runPhase(roomCode, 'night_doctor', 'ليل - دور الدكتور 💊');
+        else if (room.phase === 'night_doctor') calculateDay(roomCode);
+    }
+
+    socket.on('mafiaAction', d => { 
+        rooms[d.roomCode].actions.kill = d.targetId; 
+        nextPhase(d.roomCode); 
     });
 
-    function processNightResults(roomCode) {
+    socket.on('doctorAction', d => {
+        let room = rooms[d.roomCode];
+        let p = room.players.find(pl => pl.id === socket.id);
+        if (p.lastProtected === d.targetId) return socket.emit('uiLog', 'حميته الجولة اللي راحت! اختر غيره');
+        room.actions.heal = d.targetId;
+        p.lastProtected = d.targetId;
+        nextPhase(d.roomCode);
+    });
+
+    socket.on('detectiveAction', d => {
+        let target = rooms[d.roomCode].players.find(p => p.id === d.targetId);
+        socket.emit('uiLog', `التحقيق: ${target.name} هو ${target.role === 'مافيا' ? 'مافيا 💀' : 'مواطن ✅'}`);
+        nextPhase(d.roomCode);
+    });
+
+    function calculateDay(roomCode) {
         let room = rooms[roomCode];
-        let killed = (room.actions.kill !== room.actions.heal) ? room.actions.kill : null;
-        if(killed) {
-            let p = room.players.find(pl => pl.id === killed);
-            if(p) p.isAlive = false;
+        let killedId = (room.actions.kill !== room.actions.heal) ? room.actions.kill : null;
+        if(killedId) room.players.find(p=>p.id===killedId).isAlive = false;
+        
+        let msg = killedId ? `طلع النهار.. مات ${room.players.find(p=>p.id===killedId).name}` : "طلع النهار.. وما مات أحد!";
+        io.to(roomCode).emit('dayStarted', { msg, players: room.players.filter(p=>p.isAlive), dayTimer: room.settings.dayTimer });
+        checkWin(roomCode);
+    }
+
+    function checkWin(roomCode) {
+        let room = rooms[roomCode];
+        let alive = room.players.filter(p => p.isAlive);
+        let mafiaCount = alive.filter(p => p.role === 'مافيا').length;
+        let othersCount = alive.length - mafiaCount;
+
+        if (mafiaCount === 0) {
+            io.to(roomCode).emit('gameOver', { winner: 'المواطنين ✅', players: room.players });
+            return true;
+        } else if (mafiaCount >= othersCount) {
+            io.to(roomCode).emit('gameOver', { winner: 'المافيا 💀', players: room.players });
+            return true;
         }
-        io.to(roomCode).emit('dayStarted', { killed: killed, players: room.players });
-        room.actions = { kill: null, heal: null };
+        return false;
     }
 
     socket.on('castVote', d => {
         let room = rooms[d.roomCode];
         room.votes[socket.id] = d.targetId;
-        if(Object.keys(room.votes).length >= room.players.filter(p => p.isAlive).length) {
+        if (Object.keys(room.votes).length >= room.players.filter(p=>p.isAlive).length) {
             let counts = {};
-            Object.values(room.votes).forEach(id => counts[id] = (counts[id] || 0) + 1);
-            let kickedId = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
-            let p = room.players.find(pl => pl.id === kickedId);
-            if(p) p.isAlive = false;
-            io.to(d.roomCode).emit('notification', `القرية طردت: ${p.name}`);
-            room.votes = {};
-            setTimeout(() => runGameLoop(d.roomCode), 5000);
+            Object.values(room.votes).forEach(id => { if(id !== 'skip') counts[id] = (counts[id] || 0) + 1 });
+            let sorted = Object.keys(counts).sort((a,b) => counts[b] - counts[a]);
+            
+            if (sorted.length === 0 || (sorted.length > 1 && counts[sorted[0]] === counts[sorted[1]])) {
+                io.to(d.roomCode).emit('uiLog', "تعادل! لا يوجد طرد.");
+                room.votes = {};
+                setTimeout(() => startNight(d.roomCode), 3000);
+            } else {
+                io.to(d.roomCode).emit('defensePhase', { targetId: sorted[0], targetName: room.players.find(p=>p.id===sorted[0]).name, time: room.settings.defTimer });
+            }
         }
+    });
+
+    socket.on('finalDecision', d => {
+        let room = rooms[d.roomCode];
+        if (d.decision === 'kill') {
+            room.players.find(p => p.id === d.targetId).isAlive = false;
+            io.to(d.roomCode).emit('uiLog', `تم طرد ${room.players.find(p => p.id === d.targetId).name}`);
+        }
+        room.votes = {};
+        if(!checkWin(d.roomCode)) setTimeout(() => startNight(d.roomCode), 3000);
     });
 });
 
