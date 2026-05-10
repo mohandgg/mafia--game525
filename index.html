@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مافيا أونلاين - النسخة الكاملة</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #0b0b0b; color: white; text-align: center; margin: 0; padding: 10px; }
+        .container { background: #1a1a1a; padding: 20px; border-radius: 15px; width: 90%; max-width: 400px; display: inline-block; margin-top: 20px; border: 1px solid #333; }
+        button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .btn-action { background: #e74c3c; color: white; }
+        .btn-vote { background: #3498db; color: white; }
+        .hidden { display: none; }
+        .role-card { background: linear-gradient(135deg, #2c3e50, #000); padding: 30px; border-radius: 15px; border: 2px solid #f1c40f; margin-bottom: 20px; }
+        .phase-title { color: #f1c40f; font-size: 20px; margin-bottom: 15px; }
+        .player-item { background: #222; padding: 10px; margin: 5px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+
+    <div id="screen-lobby" class="container">
+        <h2>الغرفة: <span id="room-id" style="color: #f1c40f;"></span></h2>
+        <div id="player-list"></div>
+        <button onclick="startGame()" id="start-btn" class="hidden" style="background: #27ae60;">ابدأ اللعبة (توزيع الأدوار)</button>
+    </div>
+
+    <div id="screen-game" class="container hidden">
+        <div id="role-display" class="role-card">
+            <p>دورك السري هو:</p>
+            <h1 id="my-role" style="color: #f1c40f;"></h1>
+        </div>
+
+        <div id="action-area">
+            <h3 id="phase-name" class="phase-title">بانتظار البقية...</h3>
+            <div id="action-list"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let myId = "";
+        let myRole = "";
+        let currentRoom = "";
+
+        // استقبال كود الغرفة
+        socket.on('roomCreated', code => {
+            currentRoom = code;
+            document.getElementById('room-id').innerText = code;
+            myId = socket.id;
+        });
+
+        // تحديث قائمة اللاعبين
+        socket.on('updatePlayers', players => {
+            const list = document.getElementById('player-list');
+            list.innerHTML = players.map(p => `<div>✅ ${p.name}</div>`).join('');
+            if(players.length >= 2) document.getElementById('start-btn').classList.remove('hidden');
+        });
+
+        function startGame() {
+            socket.emit('startGame', currentRoom);
+        }
+
+        // استقبال الدور
+        socket.on('yourRole', role => {
+            myRole = role;
+            document.getElementById('my-role').innerText = role;
+            document.getElementById('screen-lobby').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+        });
+
+        // تغيير المراحل (الليل)
+        socket.on('changePhase', data => {
+            const area = document.getElementById('action-list');
+            const title = document.getElementById('phase-name');
+            title.innerText = data.phase;
+            area.innerHTML = "";
+
+            // هل هذا دوري؟
+            const isMafiaTurn = data.phase.includes("المافيا") && myRole.includes("مافيا");
+            const isDoctorTurn = data.phase.includes("الدكتور") && myRole.includes("دكتور");
+            const isDetTurn = data.phase.includes("الشايب") && myRole.includes("شايب");
+
+            if (isMafiaTurn || isDoctorTurn || isDetTurn) {
+                data.players.forEach(p => {
+                    if (p.id !== socket.id) {
+                        const btn = document.createElement('button');
+                        btn.className = "btn-action";
+                        btn.innerText = p.name;
+                        btn.onclick = () => sendAction(p.id, data.phase);
+                        area.appendChild(btn);
+                    }
+                });
+            } else {
+                area.innerHTML = "<p>غمض عيونك.. الآن دور غيرك 🤫</p>";
+            }
+        });
+
+        function sendAction(targetId, phase) {
+            let event = "";
+            if(phase.includes("المافيا")) event = "mafiaAction";
+            if(phase.includes("الشايب")) event = "detectiveAction";
+            if(phase.includes("الدكتور")) event = "doctorAction";
+            
+            socket.emit(event, { roomCode: currentRoom, targetId: targetId });
+            document.getElementById('action-list').innerHTML = "<p>تم تنفيذ طلبك، انتظر الثواني القادمة...</p>";
+        }
+
+        socket.on('notification', msg => alert(msg));
+        
+        socket.on('dayStarted', data => {
+            alert(data.message);
+            document.getElementById('phase-name').innerText = "النهار - وقت النقاش والتصويت";
+            // هنا يظهر التصويت للكل
+            const area = document.getElementById('action-list');
+            area.innerHTML = "<h4>صوّت على من تشك فيه:</h4>";
+            data.players.filter(p => p.isAlive).forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = "btn-vote";
+                btn.innerText = p.name;
+                btn.onclick = () => alert("تم تسجيل صوتك ضد " + p.name);
+                area.appendChild(btn);
+            });
+        });
+
+        socket.on('gameOver', msg => {
+            alert("النهاية: " + msg);
+            location.reload(); // يرجعهم للبداية
+        });
+
+        socket.on('error', msg => alert(msg));
+    </script>
+</body>
+</html>
